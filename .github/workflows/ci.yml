@@ -104,7 +104,7 @@ jobs:
           RUNNER_TOOL_CACHE: /tmp/runner-tool-cache
 
       - name: Install dependencies
-        run: npm ci
+        run: npm ci --ignore-scripts
 
       - name: Run semantic-release
         id: release

@@ -12,7 +12,7 @@ COPY package*.json ./
 
 # Install dependencies with cache mount (persists between builds)
 RUN --mount=type=cache,target=/root/.npm \
-    npm ci
+    npm ci --ignore-scripts
 
 # Copy source code and build
 COPY . .

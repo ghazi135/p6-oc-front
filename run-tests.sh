@@ -26,7 +26,7 @@ clean_test_artifacts() {
 run_angular_tests() {
   cd "${PROJECT_ROOT}"
   echo "[run-tests] intall dependencies..."
-  npm ci
+  npm ci --ignore-scripts
   echo "[run-tests] Running Angular tests..."
   if ! npm test; then
     return 1
