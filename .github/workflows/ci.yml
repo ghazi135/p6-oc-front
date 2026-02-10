@@ -40,7 +40,7 @@ jobs:
         run: chmod +x run-tests.sh
 
       - name: Install dependencies and run tests
-        run: ./run-tests.sh ${{ vars.APP_TYPE }}
+        run: ./run-tests.sh ${{ env.APP_TYPE }}
 
       - name: Upload test results
         uses: actions/upload-artifact@v4
