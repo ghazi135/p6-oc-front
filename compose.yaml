@@ -1,0 +1,6 @@
+name: olympic-games-starter
+services:
+  frontend:
+    image: vbuyakov/ocr-java-angular-project-6-front:latest
+    ports:
+      - "${APP_PORT:-80}:80"

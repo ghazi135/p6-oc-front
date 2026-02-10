@@ -1,0 +1,9 @@
+name: olympic-games-starter-dev
+
+services:
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "${APP_PORT:-80}:80"

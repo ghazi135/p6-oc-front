@@ -1,0 +1,164 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - '**'
+  pull_request:
+    branches:
+      - '**'
+  workflow_dispatch:
+    inputs:
+      app_type:
+        description: 'Application type to test'
+        required: false
+        default: 'angular'
+        type: choice
+        options:
+          - angular
+          - springboot
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    env:
+      APP_TYPE: ${{ inputs.app_type || vars.APP_TYPE || 'angular' }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: 'npm'
+        env:
+          RUNNER_TOOL_CACHE: /tmp/runner-tool-cache
+
+      - name: Make test script executable
+        run: chmod +x run-tests.sh
+
+      - name: Install dependencies and run tests
+        run: ./run-tests.sh ${{ vars.APP_TYPE }}
+
+      - name: Upload test results
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results
+          path: test-results
+
+  # Build Docker image and save for later jobs
+  build:
+    if: ${{ (github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && github.base_ref == 'main') }}
+    runs-on: ubuntu-latest
+    needs: test
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build Docker image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: false
+          tags: ${{ github.event.repository.name }}:${{ github.sha }}
+          outputs: type=docker,dest=/tmp/image.tar
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Upload image artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: docker-image
+          path: /tmp/image.tar
+          retention-days: 1
+
+  # Release only after build is verified
+  release:
+    if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-latest
+    needs: build
+    permissions:
+      contents: write
+
+    outputs:
+      new_release_version: ${{ steps.release.outputs.new_release_version }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: 'npm'
+        env:
+          RUNNER_TOOL_CACHE: /tmp/runner-tool-cache
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run semantic-release
+        id: release
+        uses: cycjimmy/semantic-release-action@v6
+        with:
+          extra_plugins: |
+            @semantic-release/commit-analyzer
+            @semantic-release/release-notes-generator
+            @semantic-release/npm
+            @semantic-release/git
+            @semantic-release/github
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # Load saved image and push to registry
+  publish:
+    if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-latest
+    needs:
+      - build
+      - release
+
+    steps:
+      - name: Download image artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: docker-image
+          path: /tmp
+
+      - name: Load Docker image
+        run: docker load -i /tmp/image.tar
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Tag and push image
+        run: |
+          IMAGE="${{ secrets.DOCKERHUB_USERNAME }}/${{ github.event.repository.name }}"
+
+          # Tag with SHA
+          docker tag ${{ github.event.repository.name }}:${{ github.sha }} ${IMAGE}:${{ github.sha }}
+          docker push ${IMAGE}:${{ github.sha }}
+
+          # Tag with latest
+          docker tag ${{ github.event.repository.name }}:${{ github.sha }} ${IMAGE}:latest
+          docker push ${IMAGE}:latest
+
+          # Tag with version if released
+          if [ -n "${{ needs.release.outputs.new_release_version }}" ]; then
+            docker tag ${{ github.event.repository.name }}:${{ github.sha }} ${IMAGE}:${{ needs.release.outputs.new_release_version }}
+            docker push ${IMAGE}:${{ needs.release.outputs.new_release_version }}
+            docker tag ${{ github.event.repository.name }}:${{ github.sha }} ${IMAGE}:v${{ needs.release.outputs.new_release_version }}
+            docker push ${IMAGE}:v${{ needs.release.outputs.new_release_version }}
+          fi
